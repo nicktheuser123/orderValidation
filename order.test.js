@@ -4,7 +4,7 @@ let order;
 let result;
 
 beforeAll(async () => {
-  const ORDER_ID = "1770131248673x697951971927654400";
+  const ORDER_ID = "1770134382524x927677568890961900";
 
   order = await getThing("GP_Order", ORDER_ID);
 
@@ -87,6 +87,11 @@ describe("GP_Order financial validation", () => {
   it("validates Total Order Value", () => {
     expect(order["Total Order Value"])
       .toBeCloseTo(result.totalOrderValue, 2);
+  });
+
+  it("validates Total Service Fee", () => {
+    expect(order["Fee Service"])
+      .toBeCloseTo(result.totalServiceFee, 2);
   });
 
 });

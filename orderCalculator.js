@@ -13,12 +13,17 @@ function calculateOrder({
   // Final amount is (ticket price * qty + service fee - discount) AFTER discount deduction
   let finalAmount = 0;
   let discountTotal = 0;
+  let totalServiceFee = 0; // Track total service fee across all addOns
   let discountAppliedToOrder = false; // Track if discount has been applied to this order
 
   logSection("ORDER CALCULATION START");
 
+  // Get service fee per ticket from eventDetail, default to 2 if not specified
+  const serviceFeePerTicket = eventDetail["Service Fee"] || 2;
+
   // console.log("Order ID:", order._id);
   console.log("Promotion:", promotion ? `${promotion._id} (Type: ${promotion["OS GP Promotion Type"]}, Amount: ${promotion.DiscountAmt || "N/A"}, Pct: ${promotion.DiscountPct || "N/A"})` : "None");
+  console.log("Service Fee per Ticket:", money(serviceFeePerTicket));
 
 addOns.forEach((addOn, index) => {
   // 🚨 HARD SKIP — FIRST LINE
@@ -42,7 +47,8 @@ addOns.forEach((addOn, index) => {
 
   ticketCount += qty;
 
-  const serviceFee = 2 * qty;
+  const serviceFee = serviceFeePerTicket * qty;
+  totalServiceFee += serviceFee;
 
   let discount = 0;
   let discountApplied = false;
@@ -141,6 +147,7 @@ addOns.forEach((addOn, index) => {
   logSection("TOTALS");
 
   console.log("Ticket Count:", ticketCount);
+  console.log("Total Service Fee:", money(totalServiceFee));
   console.log("Gross Amount (before discount):", money(grossAmount));
   console.log("Final Amount (after discount):", money(finalAmount));
   console.log("Discount Total (calculated):", money(discountTotal));
@@ -155,6 +162,7 @@ addOns.forEach((addOn, index) => {
   return {
     ticketCount,
     grossAmount,
+    totalServiceFee,
     discountTotal,
     processingFeeRevenue,
     stripeDeduction,
