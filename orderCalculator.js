@@ -1,5 +1,10 @@
 const { money, logSection } = require("./logger");
 
+// Helper function to round to 2 decimal places
+function roundTo2(num) {
+  return Math.round(num * 100) / 100;
+}
+
 function calculateOrder({
   order,
   addOns,
@@ -10,7 +15,7 @@ function calculateOrder({
   orderFees = []
 }) {
   let ticketCount = 0;
-  // Gross amount is (ticket price * qty + service fee) WITHOUT discount deduction
+  // Gross amount is (ticket price * qty) only - does NOT include service fees
   let grossAmount = 0;
   // Final amount is (ticket price * qty + service fee - discount) AFTER discount deduction
   let finalAmount = 0;
@@ -25,7 +30,7 @@ function calculateOrder({
 
   logSection("ORDER CALCULATION START");
 
-  console.log("ED PF TOGGLE", eventDetail["No Processing Fee"]);
+  // console.log("ED PF TOGGLE", eventDetail["No Processing Fee"]);
   // console.log("Order ID:", order._id);
   console.log("Promotion:", promotion ? `${promotion._id} (Type: ${promotion["OS GP Promotion Type"]}, Amount: ${promotion.DiscountAmt || "N/A"}, Pct: ${promotion.DiscountPct || "N/A"})` : "None");
 
@@ -100,10 +105,11 @@ addOns.forEach((addOn, index) => {
 
   discountTotal += discount;
 
-  const addOnGross = (ticketPrice * qty) + serviceFee;
+  const addOnTicketTotal = ticketPrice * qty;
+  const addOnGross = addOnTicketTotal + serviceFee;
   const addOnFinal = addOnGross - discount;
 
-  grossAmount += addOnGross;
+  grossAmount += addOnTicketTotal; // Gross amount excludes service fees
   finalAmount += addOnFinal;
   
   // Store final price for this addOn (for custom fee calculation)
@@ -116,7 +122,8 @@ addOns.forEach((addOn, index) => {
   console.log("Service Fee per Ticket:", money(serviceFeePerTicket));
   console.log("Service Fee (total):", money(serviceFee));
   console.log("Discount:", money(discount));
-  console.log("AddOn Gross (before discount):", money(addOnGross));
+  console.log("AddOn Ticket Total (gross, no service fee):", money(addOnTicketTotal));
+  console.log("AddOn Gross (ticket + service fee, before discount):", money(addOnGross));
   console.log("AddOn Final (after discount):", money(addOnFinal));
 });
 
@@ -249,30 +256,53 @@ addOns.forEach((addOn, index) => {
       throw new Error(`Invalid processing fee percentage: ${processingFeePct}. Denominator would be ${denominator}`);
     }
     
-    // Calculate base totalOrderValue for tickets + custom fees (for processing fee calculation)
-    // Custom fees are included in total and may affect processing fee
-    // This already accounts for Stripe deduction on the tickets + custom fees portion
-    // Note: totalOrderValueBase already includes custom fees grossed up, so don't add them again
-    const totalOrderValueBase =
-      (finalAmount + totalCustomFees + processingFeeFixed + 0.3) / denominator;
-
-    // Processing fee revenue is calculated on base totalOrderValue (excluding donations, including custom fees)
-    processingFeeRevenue =
-      processingFeeFixed +
-      (totalOrderValueBase * processingFeePct);
-
-    // Total order value calculation:
-    // - Tickets + Custom Fees: already grossed up for Stripe in totalOrderValueBase
-    // - Donations: need to be grossed up for Stripe too
-    // Calculate donations grossed up for Stripe (they need their own Stripe fee)
-    const donationGrossedUp = donationTotal / 0.971;
+    // New approach: Calculate total processing fee (PFD + PFR combined)
+    // PFD = Processing Fee Deduction (Stripe: 2.9% + $0.30)
+    // PFR = Processing Fee Revenue (8count's fee: fixed $ + percentage)
     
-    // Total order value = tickets + custom fees base (already grossed up) + donations grossed up
-    // Note: Custom fees are already included in totalOrderValueBase, so we don't add them again
-    totalOrderValue = totalOrderValueBase + donationGrossedUp;
-
-    // Stripe deduction is calculated on totalOrderValue (including donations)
-    stripeDeduction = (totalOrderValue * 0.029) + 0.3;
+    // Step 1: Calculate donation fee separately
+    // Formula: ((Donation Amount + 0) / (1 - PFD%)) × PFD %
+    // PFD% = 0.029 (Stripe's 2.9%)
+    const donationFee = roundTo2((donationTotal / (1 - 0.029)) * 0.029);
+    console.log("Donation Fee (calculated separately):", money(donationFee));
+    
+    // Step 2: Calculate base for total processing fee
+    // Base = [Order total (tickets+service-discounts) + (PFD $ + PFR $) + Custom Fees] / [1 - (PFD % + PFR %)]
+    // Order total = finalAmount (tickets + service fees - discounts)
+    // PFD $ = 0.30 (Stripe's fixed fee)
+    // PFR $ = processingFeeFixed
+    // PFD % = 0.029
+    // PFR % = processingFeePct
+    const combinedPercentage = 0.029 + processingFeePct; // PFD % + PFR %
+    const combinedFixed = 0.30 + processingFeeFixed; // PFD $ + PFR $
+    const baseDenominator = 1 - combinedPercentage;
+    
+    if (baseDenominator <= 0) {
+      throw new Error(`Invalid combined processing fee percentage: ${combinedPercentage}. Denominator would be ${baseDenominator}`);
+    }
+    
+    const base = (finalAmount + combinedFixed + totalCustomFees) / baseDenominator;
+    
+    // Step 3: Calculate total processing fee
+    // Total processing fee = Base × (PFD % + PFR %) + (PFD $ + PFR $) + donation_fee
+    const totalProcessingFee = roundTo2(
+      (base * combinedPercentage) + combinedFixed + donationFee
+    );
+    console.log("Base (for total processing fee):", money(base));
+    console.log("Total Processing Fee (PFD + PFR + donation fee):", money(totalProcessingFee));
+    
+    // Step 4: Total order value = finalAmount + totalCustomFees + totalProcessingFee + donationTotal
+    totalOrderValue = finalAmount + totalCustomFees + totalProcessingFee + donationTotal;
+    
+    // Step 5: Stripe deduction (PFD) on total order value (amount charged to customer)
+    // Bubble: round the percentage part first, then add fixed fee
+    const pfdPercentagePart = roundTo2(totalOrderValue * 0.029);
+    stripeDeduction = pfdPercentagePart + 0.30;
+    console.log("PFD (on total order value):", money(stripeDeduction));
+    
+    // Step 6: Processing Fee Revenue = Total processing fee - PFD (do not round)
+    processingFeeRevenue = totalProcessingFee - stripeDeduction;
+    console.log("PFR (Total processing fee - PFD):", money(processingFeeRevenue));
   }
 
   console.log("No Processing Fee:", noProcessingFee ? "Yes" : "No");
@@ -287,7 +317,7 @@ addOns.forEach((addOn, index) => {
   console.log("Total Service Fee:", money(totalServiceFee));
   console.log("Donation Total:", money(donationTotal));
   console.log("Total Custom Fees:", money(totalCustomFees));
-  console.log("Gross Amount (before discount):", money(grossAmount));
+  console.log("Gross Amount (ticket revenue only, no service fees):", money(grossAmount));
   console.log("Final Amount (after discount):", money(finalAmount));
   console.log("Discount Total (calculated):", money(discountTotal));
   console.log("Discount Amount (from Bubble):", order["Discount Amount"] || "N/A");

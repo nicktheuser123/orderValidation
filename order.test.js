@@ -5,7 +5,7 @@ let result;
 let orderFees = [];
 
 beforeAll(async () => {
-  const ORDER_ID = "1770367778023x577857204686684200";
+  const ORDER_ID = "1771222622831x785202361524289500";
 
   order = await getThing("GP_Order", ORDER_ID);
 
@@ -54,7 +54,7 @@ beforeAll(async () => {
   orderFees = [];
   for (const addOn of addOns) {
     if (addOn["GP_OrderFee"] && Array.isArray(addOn["GP_OrderFee"])) {
-      console.log("AddONPRE",addOn["GP_OrderFee"]);
+      // console.log("AddONPRE",addOn["GP_OrderFee"]);
       const orderFeePromises = addOn["GP_OrderFee"].map(async (id) => {
         try {
           return await getThing("GP_OrderFee", id);

@@ -9,9 +9,9 @@ const client = axios.create({
 });
 
 async function getThing(type, id) {
-   console.log("URL",`${process.env.BUBBLE_API_BASE}/${type}/${id}`);
+  //  console.log("URL",`${process.env.BUBBLE_API_BASE}/${type}/${id}`);
   const res = await client.get(`/${type}/${id}`);
-  console.log("RESPONSE",res.data.response)
+  // console.log("RESPONSE",res.data.response)
   // console.log("ID",id)
   return res.data.response;
 }
