@@ -5,7 +5,7 @@ let result;
 let orderFees = [];
 
 beforeAll(async () => {
-  const ORDER_ID = "1771222622831x785202361524289500";
+  const ORDER_ID = "1771245007941x130817495758274560";
 
   order = await getThing("GP_Order", ORDER_ID);
 

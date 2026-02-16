@@ -23,7 +23,11 @@ function calculateOrder({
   let totalServiceFee = 0; // Track total service fee across all addOns
   let donationTotal = 0; // Track total donations
   let totalCustomFees = 0; // Track total custom fees
-  let discountAppliedToOrder = false; // Track if discount has been applied to this order
+  // For Discount Amount type, track remaining discount to distribute across addons
+  let remainingDiscountAmount = 0;
+  if (promotion && promotion["OS GP Promotion Type"] === "Discount Amount") {
+    remainingDiscountAmount = promotion.DiscountAmt || 0;
+  }
   
   // Track final prices per addOn for custom fee calculation
   const addOnFinalPrices = {};
@@ -64,40 +68,34 @@ addOns.forEach((addOn, index) => {
   console.log("ADDON QTY",addOn.Quantity)
   const qty = addOn.Quantity;
   const ticketPrice = ticketType.Price;
-  
-  // Get service fee per ticket from GP_TicketType, default to 2 if not specified
-  // However, if ticket price is 0, service fee is also 0
-  const serviceFeePerTicket = ticketPrice === 0 ? 0 : (ticketType["Service Fee"] || 2);
 
   ticketCount += qty;
 
-  const serviceFee = serviceFeePerTicket * qty;
-  totalServiceFee += serviceFee;
+  // Calculate ticket total first (needed to cap discount)
+  const addOnTicketTotal = ticketPrice * qty;
 
   let discount = 0;
-  let discountApplied = false;
 
   if (
     promotion &&
     ticketType.GP_Promotions?.includes(promotion._id)
   ) {
-    discountApplied = true;
-
     if (promotion["OS GP Promotion Type"] === "Discount Amount") {
-      // Fixed amount discounts are applied once per order, not per addOn
-      if (!discountAppliedToOrder) {
-        discount = promotion.DiscountAmt;
-        discountAppliedToOrder = true; // Mark that discount has been applied
-        console.log(`  → Applying Discount Amount: ${money(promotion.DiscountAmt)} (once per order)`);
-      } else {
-        console.log(`  → Discount Amount already applied to this order, skipping`);
+      // Fixed amount discounts are distributed across eligible addons
+      // Apply discount up to the ticket total for this addon, or remaining discount amount, whichever is smaller
+      if (remainingDiscountAmount > 0) {
+        discount = Math.min(remainingDiscountAmount, addOnTicketTotal);
+        remainingDiscountAmount -= discount;
+        console.log(`  → Applying Discount Amount: ${money(discount)} to this addon (ticket total: ${money(addOnTicketTotal)}, remaining: ${money(remainingDiscountAmount)})`);
       }
     }
 
     if (promotion["OS GP Promotion Type"] === "Discount Percentage") {
       // Percentage discounts are applied per addOn
-      discount = (ticketPrice * qty) * (promotion.DiscountPct);
-      console.log(`  → Applying Discount Percentage: ${promotion.DiscountPct} on ${money(ticketPrice * qty)} = ${money(discount)} per addOn`);
+      discount = addOnTicketTotal * (promotion.DiscountPct);
+      // Cap discount to not exceed ticket total (shouldn't happen with percentage, but safety check)
+      discount = Math.min(discount, addOnTicketTotal);
+      console.log(`  → Applying Discount Percentage: ${promotion.DiscountPct} on ${money(addOnTicketTotal)} = ${money(discount)} per addOn`);
     }
   } else if (promotion) {
     console.log(`  → Promotion exists but not applicable to this ticket type`);
@@ -105,9 +103,26 @@ addOns.forEach((addOn, index) => {
 
   discountTotal += discount;
 
-  const addOnTicketTotal = ticketPrice * qty;
-  const addOnGross = addOnTicketTotal + serviceFee;
-  const addOnFinal = addOnGross - discount;
+  // Get service fee per ticket from GP_TicketType, default to 2 if not specified
+  // However, if ticket price is 0, service fee is also 0
+  const serviceFeePerTicket = ticketPrice === 0 ? 0 : (ticketType["Service Fee"] || 2);
+
+  // If discount covers the entire ticket price (discount >= ticket total), service fee and final price are both 0
+  let serviceFee = 0;
+  let addOnFinal = 0;
+  let addOnGross = addOnTicketTotal;
+  
+  if (discount >= addOnTicketTotal) {
+    // Discount covers entire ticket price - service fee and final price are 0
+    console.log(`  → Discount (${money(discount)}) covers entire ticket price (${money(addOnTicketTotal)}), service fee and final price set to 0`);
+  } else {
+    // Normal case: discount doesn't cover entire ticket price
+    serviceFee = serviceFeePerTicket * qty;
+    addOnGross = addOnTicketTotal + serviceFee;
+    addOnFinal = addOnGross - discount;
+  }
+
+  totalServiceFee += serviceFee;
 
   grossAmount += addOnTicketTotal; // Gross amount excludes service fees
   finalAmount += addOnFinal;
@@ -119,7 +134,7 @@ addOns.forEach((addOn, index) => {
   console.log("AddOn ID:", addOn._id);
   console.log("Qty:", qty);
   console.log("Ticket Price:", money(ticketPrice));
-  console.log("Service Fee per Ticket:", money(serviceFeePerTicket));
+  console.log("Service Fee per Ticket:", discount < addOnTicketTotal ? money(serviceFeePerTicket) : "0.00 (discount covers entire ticket price)");
   console.log("Service Fee (total):", money(serviceFee));
   console.log("Discount:", money(discount));
   console.log("AddOn Ticket Total (gross, no service fee):", money(addOnTicketTotal));
